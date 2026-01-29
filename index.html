@@ -15,7 +15,8 @@
         const SUPABASE_URL = 'https://xelptjkyvphrzrgotxmh.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhlbHB0amt5dnBocnpyZ290eG1oIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk3MDA5MjIsImV4cCI6MjA4NTI3NjkyMn0.QsoiHRYGAndCzhksU5SrpyrFRcm4pdVzuDdsrJUodkA';
         
-        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const { createClient } = supabase;
+        const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY);
 
         // Contraseñas - CÁMBIALAS por las que quieras
         const PASSWORDS = {
@@ -42,7 +43,7 @@
             render();
             
             try {
-                const { data, error } = await supabase
+                const { data, error } = await supabaseClient
                     .from('photos')
                     .select('*')
                     .order('created_at', { ascending: true });
@@ -63,7 +64,7 @@
         // Guardar foto en Supabase
         async function savePhoto(photoData) {
             try {
-                const { data, error } = await supabase
+                const { data, error } = await supabaseClient
                     .from('photos')
                     .insert([photoData])
                     .select();
@@ -86,7 +87,7 @@
         // Actualizar estado de impresión
         async function updatePrinted(id, printed) {
             try {
-                const { error } = await supabase
+                const { error } = await supabaseClient
                     .from('photos')
                     .update({ printed: printed })
                     .eq('id', id);
@@ -109,7 +110,7 @@
         // Eliminar foto
         async function deletePhoto(id) {
             try {
-                const { error } = await supabase
+                const { error } = await supabaseClient
                     .from('photos')
                     .delete()
                     .eq('id', id);
