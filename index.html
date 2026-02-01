@@ -7,48 +7,38 @@
     
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
     
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Caveat:wght@600&family=Indie+Flower&display=swap');
-        
         body { font-family: system-ui, -apple-system, sans-serif; }
         .handwritten { font-family: 'Caveat', cursive; line-height: 1.2; }
-        
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
-        
-        .note-input {
-            font-family: 'Caveat', cursive;
-            font-size: 1.3rem;
-            background-image: linear-gradient(to right, #fefce8 0%, #fef9c3 100%);
-            line-height: 1.4;
-        }
+        .note-input { font-family: 'Caveat', cursive; font-size: 1.3rem; background-image: linear-gradient(to right, #fefce8 0%, #fef9c3 100%); line-height: 1.4; }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800">
 
     <div id="root"></div>
 
-    <div id="error-display" style="display:none; padding:20px; background:#fee2e2; color:#991b1b; position:fixed; top:0; left:0; width:100%; z-index:9999;">
-        <strong>⚠️ Error:</strong> <span id="error-message"></span>
-    </div>
-
     <script>
-        window.onerror = function(msg, url, line) {
-            if (msg.includes("Tailwind")) return false;
-            document.getElementById('error-display').style.display = 'block';
-            document.getElementById('error-message').textContent = msg;
-            return false;
-        };
-
+        // --- 1. CONFIGURACIÓN SUPABASE ---
         const SUPABASE_URL = 'https://czlzvdhnvmrsbjconubo.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN6bHp2ZGhudm1yc2JqY29udWJvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk3NzIxMDIsImV4cCI6MjA4NTM0ODEwMn0.mGb--eI3WQHeEd-y2-kVcYrrgDsKhvB4c1H0tNBzxqw';
-        
         const { createClient } = supabase;
         const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+        // --- 2. CONFIGURACIÓN DE ACCESO ---
         const EMAIL_AMIGA = 'paqui.pedrosa@gmail.com'; 
         const EMAIL_ADMIN = 'soniamorillo81@gmail.com';
+
+        // --- 3. CONFIGURACIÓN EMAILJS (YA CARGADA) ---
+        const EMAILJS_PUBLIC_KEY = 'DMDiMBDiGWdHXR7WS'; 
+        const EMAILJS_SERVICE_ID = 'service_xfwqrma';
+        const EMAILJS_TEMPLATE_ID = 'template_kylix6m';
+
+        emailjs.init(EMAILJS_PUBLIC_KEY);
 
         let photos = [];
         let userRole = null;
@@ -70,227 +60,171 @@
             }
         }
 
+        function enviarAviso(mensaje, destinoEmail) {
+            const templateParams = {
+                to_email: destinoEmail,
+                message: mensaje,
+                from_name: "Regalo 45 Aniversario"
+            };
+            emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams)
+                .then(() => console.log('Email de notificación enviado'))
+                .catch((err) => console.error('Fallo al enviar email:', err));
+        }
+
         async function handleLogin() {
             const password = document.getElementById('password-input').value;
             const email = isAdminLogin ? EMAIL_ADMIN : EMAIL_AMIGA;
             if (!password) return alert('Por favor, introduce la contraseña');
-            loading = true;
-            render();
+            loading = true; render();
             const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-            if (error) {
-                loading = false;
-                render();
-                return alert('Acceso denegado: Revisa la contraseña.');
-            }
+            if (error) { loading = false; render(); return alert('Acceso denegado.'); }
             userRole = (data.user.email === EMAIL_ADMIN) ? 'admin' : 'friend';
-            showLogin = false;
-            await loadPhotos();
+            showLogin = false; await loadPhotos();
         }
 
         async function handleLogout() {
-            if(confirm('¿Cerrar sesión?')) {
-                await supabaseClient.auth.signOut();
-                location.reload();
-            }
+            if(confirm('¿Cerrar sesión?')) { await supabaseClient.auth.signOut(); location.reload(); }
         }
 
         async function loadPhotos() {
-            loading = true;
-            render();
-            const { data, error } = await supabaseClient.from('photos').select('*').order('created_at', { ascending: true });
+            loading = true; render();
+            const { data } = await supabaseClient.from('photos').select('*').order('created_at', { ascending: true });
             if (data) photos = data;
-            loading = false;
-            render();
+            loading = false; render();
         }
 
         async function handleFileUpload(event) {
             const file = event.target.files[0];
-            if (!file) return;
-            if (photos.length >= 10) return alert('¡Ya has completado las 10 fotos!');
-            uploading = true;
-            render();
+            if (!file || photos.length >= 10) return;
+            uploading = true; render();
             const reader = new FileReader();
             reader.onload = async (e) => {
                 const newPhoto = { image_data: e.target.result, upload_date: new Date().toLocaleDateString('es-ES'), description: '', printed: false };
-                await supabaseClient.from('photos').insert([newPhoto]);
-                uploading = false;
-                await loadPhotos();
+                const { error } = await supabaseClient.from('photos').insert([newPhoto]);
+                if (!error) enviarAviso("¡Paqui ha subido una nueva foto al álbum! 📸", EMAIL_ADMIN);
+                uploading = false; await loadPhotos();
             };
             reader.readAsDataURL(file);
         }
 
+        async function handleTogglePrinted(id) {
+            const photo = photos.find(p => p.id === id);
+            const nuevoEstado = !photo.printed;
+            const { error } = await supabaseClient.from('photos').update({ printed: nuevoEstado }).eq('id', id);
+            if (!error && nuevoEstado) {
+                enviarAviso("¡Buenas noticias! Sonia ha marcado una de tus fotos como IMPRESA. ✨", EMAIL_AMIGA);
+            }
+            await loadPhotos();
+        }
+
         async function handleDelete(id) {
-            if (confirm('¿Quieres eliminar este recuerdo?')) {
+            if (confirm('¿Eliminar recuerdo?')) {
                 await supabaseClient.from('photos').delete().eq('id', id);
                 await loadPhotos();
             }
         }
 
-        async function handleTogglePrinted(id) {
-            const photo = photos.find(p => p.id === id);
-            await supabaseClient.from('photos').update({ printed: !photo.printed }).eq('id', id);
-            await loadPhotos();
-        }
-
-        function startEditing(id, text) {
-            editingId = id;
-            render();
-            setTimeout(() => { document.getElementById(`desc-${id}`)?.focus(); }, 50);
-        }
+        function startEditing(id) { editingId = id; render(); setTimeout(() => document.getElementById(`desc-${id}`)?.focus(), 50); }
 
         async function saveDescription(id) {
             const val = document.getElementById(`desc-${id}`).value;
             await supabaseClient.from('photos').update({ description: val }).eq('id', id);
-            editingId = null;
-            await loadPhotos();
+            editingId = null; await loadPhotos();
         }
 
         function toggleVideoAudio(num) {
-            const v1 = document.getElementById('vid1');
-            const v2 = document.getElementById('vid2');
-            if (num === 1) {
-                v1.muted = !v1.muted;
-                v2.muted = true;
-            } else {
-                v2.muted = !v2.muted;
-                v1.muted = true;
-            }
+            const v1 = document.getElementById('vid1'); const v2 = document.getElementById('vid2');
+            if (num === 1) { v1.muted = !v1.muted; v2.muted = true; } 
+            else { v2.muted = !v2.muted; v1.muted = true; }
             render();
         }
 
         function getAudioIcon(isMuted) {
-            if (isMuted) {
-                return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>`;
-            }
-            return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>`;
+            if (isMuted) return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>`;
+            return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>`;
         }
 
         function render() {
             const root = document.getElementById('root');
             if (loading && !showLogin) {
-                root.innerHTML = `<div class="min-h-screen flex flex-col items-center justify-center bg-purple-50"><div class="text-4xl animate-bounce mb-4">🎁</div><div class="text-purple-600 font-bold text-xl">Cargando...</div></div>`;
+                root.innerHTML = `<div class="min-h-screen flex items-center justify-center bg-purple-50"><div class="text-purple-600 font-bold animate-pulse">Cargando...</div></div>`;
                 return;
             }
-
             if (showLogin) {
-                const v1Muted = document.getElementById('vid1')?.muted ?? true;
-                const v2Muted = document.getElementById('vid2')?.muted ?? true;
-
+                const v1M = document.getElementById('vid1')?.muted ?? true;
+                const v2M = document.getElementById('vid2')?.muted ?? true;
                 root.innerHTML = `
                     <div class="min-h-screen bg-gradient-to-br from-pink-100 via-purple-100 to-blue-100 flex items-center justify-center p-4">
                         <div class="bg-white rounded-3xl shadow-2xl p-6 max-w-2xl w-full text-center border-4 border-white animate-fade-in">
-                            <div class="mb-6 mt-2 transform -rotate-1">
-                                <p class="handwritten text-2xl text-gray-800 mb-4 leading-snug">Para que el mundo que recorres no se quede encerrado en un cristal.</p>
+                            <div class="mb-6 transform -rotate-1">
+                                <p class="handwritten text-2xl text-gray-800">Para que el mundo que recorres no se quede encerrado en un cristal.</p>
                                 <p class="handwritten text-xl text-gray-600">Marc y Sonia x tu 45 aniv.</p>
                             </div>
-                            
                             <div class="flex flex-col sm:flex-row gap-4 mb-4 items-stretch justify-center">
-                                <div class="relative w-full sm:w-1/2 bg-black rounded-2xl overflow-hidden shadow-md flex items-center justify-center">
-                                    <video id="vid1" class="max-w-full max-h-[400px] w-auto h-auto" autoplay muted loop playsinline>
-                                        <source src="video.mp4" type="video/mp4">
-                                    </video>
-                                    <button onclick="toggleVideoAudio(1)" class="absolute bottom-3 right-3 bg-white/90 p-2 rounded-full hover:bg-white shadow-md text-gray-700 transition-all active:scale-90">
-                                        ${getAudioIcon(v1Muted)}
+                                <div class="relative w-full sm:w-1/2 bg-black rounded-2xl overflow-hidden flex items-center justify-center min-h-[200px]">
+                                    <video id="vid1" class="max-w-full max-h-[400px]" autoplay muted loop playsinline><source src="video.mp4" type="video/mp4"></video>
+                                    <button onclick="toggleVideoAudio(1)" class="absolute bottom-3 right-3 bg-white/90 p-2 rounded-full text-gray-700 shadow-sm">
+                                        ${getAudioIcon(v1M)}
                                     </button>
                                 </div>
-                                <div class="relative w-full sm:w-1/2 bg-black rounded-2xl overflow-hidden shadow-md flex items-center justify-center">
-                                    <video id="vid2" class="max-w-full max-h-[400px] w-auto h-auto" autoplay muted loop playsinline>
-                                        <source src="video2.mp4" type="video/mp4">
-                                    </video>
-                                    <button onclick="toggleVideoAudio(2)" class="absolute bottom-3 right-3 bg-white/90 p-2 rounded-full hover:bg-white shadow-md text-gray-700 transition-all active:scale-90">
-                                        ${getAudioIcon(v2Muted)}
+                                <div class="relative w-full sm:w-1/2 bg-black rounded-2xl overflow-hidden flex items-center justify-center min-h-[200px]">
+                                    <video id="vid2" class="max-w-full max-h-[400px]" autoplay muted loop playsinline><source src="video2.mp4" type="video/mp4"></video>
+                                    <button onclick="toggleVideoAudio(2)" class="absolute bottom-3 right-3 bg-white/90 p-2 rounded-full text-gray-700 shadow-sm">
+                                        ${getAudioIcon(v2M)}
                                     </button>
                                 </div>
                             </div>
-
-                            <form id="login-form" onsubmit="event.preventDefault(); handleLogin();" class="space-y-4 pt-4 border-t border-gray-100 max-w-xs mx-auto">
-                                <p class="text-sm text-gray-500 font-medium italic">
-                                    ${isAdminLogin ? '🔐 Modo Administrador' : '✨ ¡Hola! Introduce tu clave:'}
-                                </p>
-                                
+                            <form onsubmit="event.preventDefault(); handleLogin();" class="space-y-4 pt-4 border-t max-w-xs mx-auto">
                                 <input type="email" name="username" value="${isAdminLogin ? EMAIL_ADMIN : EMAIL_AMIGA}" class="hidden" autocomplete="username">
-                                
-                                <input type="password" id="password-input" name="password" placeholder="Contraseña..." 
-                                    autocomplete="current-password"
-                                    class="w-full px-4 py-3 border-2 border-purple-100 rounded-xl focus:border-purple-400 text-center text-lg shadow-inner">
-                                
-                                <button type="submit" class="w-full bg-gradient-to-r from-pink-500 to-purple-500 text-white py-3 rounded-xl font-bold text-lg shadow-lg hover:scale-[1.02] transition-all">
-                                    Entrar
-                                </button>
-                                
-                                <button type="button" onclick="isAdminLogin = !isAdminLogin; render();" class="text-[10px] text-gray-300 hover:text-purple-400 transition-colors block mx-auto">
-                                    ${isAdminLogin ? 'Volver' : 'Admin'}
-                                </button>
+                                <input type="password" id="password-input" name="password" placeholder="Contraseña..." autocomplete="current-password" class="w-full px-4 py-3 border-2 border-purple-100 rounded-xl text-center text-lg">
+                                <button type="submit" class="w-full bg-gradient-to-r from-pink-500 to-purple-500 text-white py-3 rounded-xl font-bold">Entrar</button>
+                                <button type="button" onclick="isAdminLogin = !isAdminLogin; render();" class="text-[10px] text-gray-300 block mx-auto">${isAdminLogin ? 'Volver' : 'Admin'}</button>
                             </form>
                         </div>
                     </div>`;
-
-                const v1 = document.getElementById('vid1');
-                const v2 = document.getElementById('vid2');
-                if (v1) v1.muted = v1Muted;
-                if (v2) v2.muted = v2Muted;
-
+                const v1 = document.getElementById('vid1'); const v2 = document.getElementById('vid2');
+                if (v1) v1.muted = v1M; if (v2) v2.muted = v2M;
                 return;
             }
-
             const printedCount = photos.filter(p => p.printed).length;
             root.innerHTML = `
                 <div class="min-h-screen bg-gradient-to-br from-pink-50 via-purple-50 to-blue-50 p-4 pb-20">
                     <div class="max-w-6xl mx-auto">
-                        <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 flex flex-col md:flex-row justify-between items-center gap-4">
-                            <div>
-                                <h1 class="text-3xl font-bold text-gray-800 flex items-center gap-2"><span>🎁</span> Regalo 45 Aniversario</h1>
-                                <p class="text-gray-500 mt-1">${userRole === 'admin' ? '🛠️ Administrador' : '✨ Protagonista'}</p>
-                            </div>
-                            <button onclick="handleLogout()" class="px-5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg font-medium transition-colors">Cerrar sesión</button>
+                        <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 flex justify-between items-center">
+                            <div><h1 class="text-2xl font-bold text-gray-800">🎁 Regalo 45 Aniversario</h1><p class="text-sm text-gray-500">${userRole === 'admin' ? '🛠️ Admin' : '✨ Paqui'}</p></div>
+                            <button onclick="handleLogout()" class="px-4 py-2 bg-gray-100 text-gray-500 rounded-lg text-sm">Cerrar sesión</button>
                         </div>
-
-                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-                            <div class="bg-pink-500 rounded-2xl p-5 text-white shadow-lg"><div class="text-4xl font-bold mb-1">${photos.length}/10</div><div class="text-pink-100">Fotos subidas</div></div>
-                            <div class="bg-purple-500 rounded-2xl p-5 text-white shadow-lg"><div class="text-4xl font-bold mb-1">${printedCount}</div><div class="text-purple-100">Ya impresas</div></div>
-                            <div class="bg-blue-500 rounded-2xl p-5 text-white shadow-lg"><div class="text-4xl font-bold mb-1">${10 - photos.length}</div><div class="text-blue-100">Espacios libres</div></div>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 text-center">
+                            <div class="bg-pink-500 rounded-2xl p-4 text-white shadow-lg"><div class="text-3xl font-bold">${photos.length}/10</div><div class="text-sm opacity-80">Fotos subidas</div></div>
+                            <div class="bg-purple-500 rounded-2xl p-4 text-white shadow-lg"><div class="text-3xl font-bold">${printedCount}</div><div class="text-sm opacity-80">Impresas</div></div>
+                            <div class="bg-blue-500 rounded-2xl p-4 text-white shadow-lg"><div class="text-3xl font-bold">${10 - photos.length}</div><div class="text-sm opacity-80">Libres</div></div>
                         </div>
-
                         ${userRole === 'friend' && photos.length < 10 && !uploading ? `
-                            <div class="mb-10">
-                                <label class="group block bg-white rounded-3xl border-4 border-dashed border-purple-200 hover:border-purple-400 p-10 cursor-pointer transition-all shadow-sm">
-                                    <div class="text-center">
-                                        <div class="text-6xl mb-4 group-hover:scale-110 transition-transform">📸</div>
-                                        <div class="text-2xl font-bold text-gray-700 mb-2">Añadir foto nueva</div>
-                                    </div>
-                                    <input type="file" accept="image/*" onchange="handleFileUpload(event)" class="hidden" />
-                                </label>
-                            </div>
-                        ` : ''}
-
-                        ${uploading ? `<div class="bg-white rounded-3xl shadow-xl p-8 text-center mb-8 animate-pulse border-2 border-purple-200"><p class="text-purple-600 font-bold text-xl">Subiendo foto...</p></div>` : ''}
-
-                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+                            <label class="block bg-white rounded-3xl border-4 border-dashed border-purple-200 p-8 text-center cursor-pointer mb-8 hover:border-purple-400">
+                                <div class="text-4xl mb-2">📸</div><div class="text-xl font-bold text-gray-700">Añadir foto</div>
+                                <input type="file" accept="image/*" onchange="handleFileUpload(event)" class="hidden" />
+                            </label>` : ''}
+                        ${uploading ? `<div class="bg-white rounded-3xl p-8 text-center mb-8 text-purple-600 font-bold animate-pulse">Subiendo...</div>` : ''}
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                             ${photos.map(p => `
-                                <div class="bg-white rounded-3xl shadow-xl overflow-hidden flex flex-col border border-gray-100">
-                                    <div class="relative h-72"><img src="${p.image_data}" class="w-full h-full object-cover" />
-                                        ${p.printed ? `<div class="absolute inset-0 bg-black bg-opacity-30 flex items-center justify-center"><div class="bg-green-500 text-white px-4 py-2 rounded-full font-bold border-2 border-white transform -rotate-3">✓ YA IMPRESA</div></div>` : ''}
+                                <div class="bg-white rounded-3xl shadow-lg overflow-hidden flex flex-col border">
+                                    <div class="relative h-64"><img src="${p.image_data}" class="w-full h-full object-cover" />
+                                        ${p.printed ? `<div class="absolute inset-0 bg-black/30 flex items-center justify-center"><div class="bg-green-500 text-white px-3 py-1 rounded-full text-sm font-bold border-2 border-white -rotate-3">✓ IMPRESA</div></div>` : ''}
                                     </div>
-                                    <div class="p-5 flex-1 flex flex-col">
-                                        <div class="text-xs text-gray-400 mb-3">📅 ${p.upload_date}</div>
-                                        <div class="mb-4 flex-1">
+                                    <div class="p-4 flex-1 flex flex-col">
+                                        <div class="text-[10px] text-gray-400 mb-2">${p.upload_date}</div>
+                                        <div class="flex-1 mb-4">
                                             ${editingId === p.id ? `
-                                                <textarea id="desc-${p.id}" class="note-input w-full p-3 border-2 border-yellow-300 rounded-xl resize-none" rows="3">${p.description || ''}</textarea>
-                                                <div class="flex gap-2"><button onclick="saveDescription(${p.id})" class="flex-1 bg-green-500 text-white py-1 rounded-lg text-sm font-bold">Guardar</button>
-                                                <button onclick="editingId=null;render()" class="flex-1 bg-gray-200 text-gray-600 py-1 rounded-lg text-sm font-bold">Cancelar</button></div>
-                                            ` : `
-                                                <div onclick="startEditing(${p.id}, '${(p.description || '').replace(/'/g, "\\'")}')" class="cursor-pointer hover:bg-yellow-50 p-3 rounded-xl min-h-[60px] flex items-center justify-center text-center">
-                                                    ${p.description ? `<p class="text-gray-700 font-handwritten text-xl">"${p.description}"</p>` : `<span class="text-gray-300 text-sm">✎ Escribe una nota...</span>`}
-                                                </div>
-                                            `}
+                                                <textarea id="desc-${p.id}" class="note-input w-full p-2 border-2 border-yellow-200 rounded-lg text-sm" rows="3">${p.description || ''}</textarea>
+                                                <button onclick="saveDescription(${p.id})" class="w-full bg-green-500 text-white py-1 rounded-lg text-xs mt-2 font-bold">Guardar</button>
+                                            ` : `<div onclick="startEditing(${p.id})" class="cursor-pointer min-h-[50px] text-center italic text-gray-700 font-handwritten text-lg">${p.description || '✎ Escribe una nota...'}</div>`}
                                         </div>
-                                        <div class="flex gap-2 mt-auto border-t pt-4">
-                                            ${userRole === 'admin' ? `<button onclick="handleTogglePrinted(${p.id})" class="flex-1 py-2 rounded-xl font-bold text-xs ${p.printed ? 'bg-gray-100 text-gray-500' : 'bg-green-50 text-green-600'}">${p.printed ? 'Desmarcar' : '🖨️ Marcar Impresa'}</button>` : ''}
-                                            ${(userRole === 'admin' || !p.printed) ? `<button onclick="handleDelete(${p.id})" class="w-12 bg-red-50 text-red-400 hover:bg-red-500 hover:text-white rounded-xl flex items-center justify-center transition-colors">🗑️</button>` : `<div class="flex-1 bg-gray-50 text-gray-300 py-2 rounded-xl text-center font-bold text-xs cursor-not-allowed">🔒 Protegida</div>`}
+                                        <div class="flex gap-2">
+                                            ${userRole === 'admin' ? `<button onclick="handleTogglePrinted(${p.id})" class="flex-1 py-1 bg-green-50 text-green-600 rounded-lg text-[10px] font-bold border border-green-200">${p.printed ? 'Desmarcar' : 'Marcar Impresa'}</button>` : ''}
+                                            ${(userRole === 'admin' || !p.printed) ? `<button onclick="handleDelete(${p.id})" class="px-2 bg-red-50 text-red-400 rounded-lg">🗑️</button>` : ''}
                                         </div>
                                     </div>
-                                </div>
-                            `).join('')}
+                                </div>`).join('')}
                         </div>
                     </div>
                 </div>`;
