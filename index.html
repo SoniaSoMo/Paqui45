@@ -14,11 +14,9 @@
         body { font-family: system-ui, -apple-system, sans-serif; }
         .handwritten { font-family: 'Caveat', cursive; line-height: 1.2; }
         
-        /* Animaciones suaves */
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
         
-        /* Estilo para el input de notas */
         .note-input {
             font-family: 'Caveat', cursive;
             font-size: 1.3rem;
@@ -36,7 +34,6 @@
     </div>
 
     <script>
-        // Capturador de errores
         window.onerror = function(msg, url, line) {
             if (msg.includes("Tailwind")) return false;
             document.getElementById('error-display').style.display = 'block';
@@ -44,56 +41,64 @@
             return false;
         };
 
-        // --- 1. CONFIGURACIÓN SUPABASE (LLAVES NUEVAS) ---
         const SUPABASE_URL = 'https://czlzvdhnvmrsbjconubo.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN6bHp2ZGhudm1yc2JqY29udWJvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk3NzIxMDIsImV4cCI6MjA4NTM0ODEwMn0.mGb--eI3WQHeEd-y2-kVcYrrgDsKhvB4c1H0tNBzxqw';
         
         const { createClient } = supabase;
         const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-        // --- 2. CONFIGURACIÓN APP ---
-        const PASSWORDS = {
-            friend: 'Paqui29012026',
-            admin: 'Toysola6100'
-        };
+        const EMAIL_AMIGA = 'paqui.pedrosa@gmail.com'; 
+        const EMAIL_ADMIN = 'soniamorillo81@gmail.com';
 
-        // Estado
         let photos = [];
         let userRole = null;
-        let currentPassword = '';
         let showLogin = true;
         let loading = true;
         let uploading = false;
-        
-        // Estado para editar notas
         let editingId = null;
-        let tempDesc = '';
-
-        // --- 3. FUNCIONES LÓGICAS ---
+        let isAdminLogin = false;
 
         async function init() {
-            try {
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            if (session) {
+                userRole = (session.user.email === EMAIL_ADMIN) ? 'admin' : 'friend';
+                showLogin = false;
                 await loadPhotos();
-            } catch (e) {
-                console.error(e);
+            } else {
+                loading = false;
+                render();
+            }
+        }
+
+        async function handleLogin() {
+            const password = document.getElementById('password-input').value;
+            const email = isAdminLogin ? EMAIL_ADMIN : EMAIL_AMIGA;
+            if (!password) return alert('Por favor, introduce la contraseña');
+            loading = true;
+            render();
+            const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+            if (error) {
+                loading = false;
+                render();
+                return alert('Acceso denegado: Revisa la contraseña.');
+            }
+            userRole = (data.user.email === EMAIL_ADMIN) ? 'admin' : 'friend';
+            showLogin = false;
+            await loadPhotos();
+        }
+
+        async function handleLogout() {
+            if(confirm('¿Cerrar sesión?')) {
+                await supabaseClient.auth.signOut();
+                location.reload();
             }
         }
 
         async function loadPhotos() {
             loading = true;
-            if (!showLogin) render(); 
-            
-            const { data, error } = await supabaseClient
-                .from('photos')
-                .select('*')
-                .order('created_at', { ascending: true });
-
-            if (data) {
-                photos = data;
-            } else if (error) {
-                console.error("Error cargando fotos:", error);
-            }
-            
+            render();
+            const { data, error } = await supabaseClient.from('photos').select('*').order('created_at', { ascending: true });
+            if (data) photos = data;
             loading = false;
             render();
         }
@@ -101,28 +106,13 @@
         async function handleFileUpload(event) {
             const file = event.target.files[0];
             if (!file) return;
-
             if (photos.length >= 10) return alert('¡Ya has completado las 10 fotos!');
-            if (file.size > 4 * 1024 * 1024) return alert('La foto es demasiado grande. Usa una menor de 4MB.');
-
             uploading = true;
             render();
-
             const reader = new FileReader();
             reader.onload = async (e) => {
-                const newPhoto = {
-                    image_data: e.target.result,
-                    upload_date: new Date().toLocaleDateString('es-ES'),
-                    description: '',
-                    printed: false
-                };
-
-                const { error } = await supabaseClient.from('photos').insert([newPhoto]);
-                
-                if (error) {
-                    alert('Error al subir: ' + error.message);
-                }
-                
+                const newPhoto = { image_data: e.target.result, upload_date: new Date().toLocaleDateString('es-ES'), description: '', printed: false };
+                await supabaseClient.from('photos').insert([newPhoto]);
                 uploading = false;
                 await loadPhotos();
             };
@@ -130,17 +120,7 @@
         }
 
         async function handleDelete(id) {
-            const photo = photos.find(p => p.id === id);
-            
-            if (userRole === 'friend' && photo.printed) {
-                return alert('No puedes eliminar una foto que ya está impresa');
-            }
-            
-            const msg = (userRole === 'admin' && photo.printed)
-                ? '¿Seguro que quieres borrar esta foto IMPRESA?'
-                : '¿Quieres eliminar este recuerdo?';
-            
-            if (confirm(msg)) {
+            if (confirm('¿Quieres eliminar este recuerdo?')) {
                 await supabaseClient.from('photos').delete().eq('id', id);
                 await loadPhotos();
             }
@@ -152,281 +132,169 @@
             await loadPhotos();
         }
 
-        // --- FUNCIONES DE NOTAS (CORREGIDAS) ---
         function startEditing(id, text) {
             editingId = id;
-            tempDesc = text || ''; // Carga el texto actual o vacío
             render();
-            // Enfocar el campo automáticamente
-            setTimeout(() => {
-                const el = document.getElementById(`desc-${id}`);
-                if(el) {
-                    el.focus();
-                    el.setSelectionRange(el.value.length, el.value.length); // Poner cursor al final
-                }
-            }, 50);
+            setTimeout(() => { document.getElementById(`desc-${id}`)?.focus(); }, 50);
         }
 
         async function saveDescription(id) {
-            // 1. Buscamos el cuadro de texto específico de esa foto
-            const inputElement = document.getElementById(`desc-${id}`);
-            if (!inputElement) return;
-
-            // 2. Cogemos el valor NUEVO que ha escrito el usuario
-            const newText = inputElement.value;
-
-            // 3. Lo enviamos a Supabase
-            const { error } = await supabaseClient
-                .from('photos')
-                .update({ description: newText })
-                .eq('id', id);
-
-            if (error) {
-                alert('Error al guardar: ' + error.message);
-            } else {
-                editingId = null;
-                await loadPhotos();
-            }
+            const val = document.getElementById(`desc-${id}`).value;
+            await supabaseClient.from('photos').update({ description: val }).eq('id', id);
+            editingId = null;
+            await loadPhotos();
         }
 
-        function cancelEditing() {
-            editingId = null;
+        function toggleVideoAudio(num) {
+            const v1 = document.getElementById('vid1');
+            const v2 = document.getElementById('vid2');
+            if (num === 1) {
+                v1.muted = !v1.muted;
+                v2.muted = true;
+            } else {
+                v2.muted = !v2.muted;
+                v1.muted = true;
+            }
             render();
         }
 
-        function handleLogin() {
-            if (currentPassword === PASSWORDS.friend) userRole = 'friend';
-            else if (currentPassword === PASSWORDS.admin) userRole = 'admin';
-            else return alert('Contraseña incorrecta');
-            
-            showLogin = false;
-            loadPhotos();
-        }
-
-        function toggleAudio() {
-            const video = document.getElementById('login-video');
-            const icon = document.getElementById('audio-icon');
-            
-            if (video.muted) {
-                video.muted = false;
-                // Icono de sonido activado
-                icon.innerHTML = `
-                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
-                `;
-            } else {
-                video.muted = true;
-                // Icono de sonido silenciado
-                icon.innerHTML = `
-                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                    <line x1="23" y1="9" x2="17" y2="15"></line>
-                    <line x1="17" y1="9" x2="23" y2="15"></line>
-                `;
+        function getAudioIcon(isMuted) {
+            if (isMuted) {
+                return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>`;
             }
+            return `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>`;
         }
 
-        // --- 4. RENDERIZADO ---
         function render() {
             const root = document.getElementById('root');
-            
-            // PANTALLA DE CARGA
             if (loading && !showLogin) {
-                root.innerHTML = `
-                    <div class="min-h-screen flex flex-col items-center justify-center bg-purple-50">
-                        <div class="text-4xl animate-bounce mb-4">🎁</div>
-                        <div class="text-purple-600 font-bold text-xl">Cargando...</div>
-                    </div>`;
+                root.innerHTML = `<div class="min-h-screen flex flex-col items-center justify-center bg-purple-50"><div class="text-4xl animate-bounce mb-4">🎁</div><div class="text-purple-600 font-bold text-xl">Cargando...</div></div>`;
                 return;
             }
 
-            // PANTALLA DE LOGIN
             if (showLogin) {
+                const v1Muted = document.getElementById('vid1')?.muted ?? true;
+                const v2Muted = document.getElementById('vid2')?.muted ?? true;
+
                 root.innerHTML = `
                     <div class="min-h-screen bg-gradient-to-br from-pink-100 via-purple-100 to-blue-100 flex items-center justify-center p-4">
-                        <div class="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full text-center border-4 border-white animate-fade-in">
-                            
+                        <div class="bg-white rounded-3xl shadow-2xl p-6 max-w-2xl w-full text-center border-4 border-white animate-fade-in">
                             <div class="mb-6 mt-2 transform -rotate-1">
-                                <p class="handwritten text-2xl text-gray-800 mb-4 leading-snug">
-                                    Para que el mundo que recorres no se quede encerrado en un cristal.
-                                </p>
-                                <p class="handwritten text-xl text-gray-600">
-                                    Marc y Sonia x tu 45 aniv.
-                                </p>
+                                <p class="handwritten text-2xl text-gray-800 mb-4 leading-snug">Para que el mundo que recorres no se quede encerrado en un cristal.</p>
+                                <p class="handwritten text-xl text-gray-600">Marc y Sonia x tu 45 aniv.</p>
                             </div>
                             
-                            <div class="mb-6 relative">
-                                <video 
-                                    id="login-video"
-                                    class="w-full rounded-2xl shadow-lg" 
-                                    autoplay 
-                                    muted
-                                    loop 
-                                    playsinline>
-                                    <source src="video.mp4" type="video/mp4">
-                                    Tu navegador no soporta el video.
-                                </video>
-                                <button 
-                                    id="audio-toggle"
-                                    onclick="toggleAudio()"
-                                    class="absolute bottom-4 right-4 bg-white bg-opacity-90 hover:bg-opacity-100 w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
-                                    title="Activar/Desactivar audio">
-                                    <svg id="audio-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-700">
-                                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                                        <line x1="23" y1="9" x2="17" y2="15"></line>
-                                        <line x1="17" y1="9" x2="23" y2="15"></line>
-                                    </svg>
-                                </button>
+                            <div class="flex flex-col sm:flex-row gap-4 mb-4 items-stretch justify-center">
+                                <div class="relative w-full sm:w-1/2 bg-black rounded-2xl overflow-hidden shadow-md flex items-center justify-center">
+                                    <video id="vid1" class="max-w-full max-h-[400px] w-auto h-auto" autoplay muted loop playsinline>
+                                        <source src="video.mp4" type="video/mp4">
+                                    </video>
+                                    <button onclick="toggleVideoAudio(1)" class="absolute bottom-3 right-3 bg-white/90 p-2 rounded-full hover:bg-white shadow-md text-gray-700 transition-all active:scale-90">
+                                        ${getAudioIcon(v1Muted)}
+                                    </button>
+                                </div>
+                                <div class="relative w-full sm:w-1/2 bg-black rounded-2xl overflow-hidden shadow-md flex items-center justify-center">
+                                    <video id="vid2" class="max-w-full max-h-[400px] w-auto h-auto" autoplay muted loop playsinline>
+                                        <source src="video2.mp4" type="video/mp4">
+                                    </video>
+                                    <button onclick="toggleVideoAudio(2)" class="absolute bottom-3 right-3 bg-white/90 p-2 rounded-full hover:bg-white shadow-md text-gray-700 transition-all active:scale-90">
+                                        ${getAudioIcon(v2Muted)}
+                                    </button>
+                                </div>
                             </div>
-                            
-                            <div class="space-y-4 pt-6 border-t border-gray-100">
-                                <input type="password" id="password-input" placeholder="Contraseña..." 
-                                    class="w-full px-4 py-3 border-2 border-purple-100 rounded-xl focus:outline-none focus:border-purple-400 text-center text-lg shadow-inner">
-                                <button onclick="handleLogin()" 
-                                    class="w-full bg-gradient-to-r from-pink-500 to-purple-500 text-white py-3 rounded-xl font-bold text-lg shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all">
+
+                            <form id="login-form" onsubmit="event.preventDefault(); handleLogin();" class="space-y-4 pt-4 border-t border-gray-100 max-w-xs mx-auto">
+                                <p class="text-sm text-gray-500 font-medium italic">
+                                    ${isAdminLogin ? '🔐 Modo Administrador' : '✨ ¡Hola! Introduce tu clave:'}
+                                </p>
+                                
+                                <input type="email" name="username" value="${isAdminLogin ? EMAIL_ADMIN : EMAIL_AMIGA}" class="hidden" autocomplete="username">
+                                
+                                <input type="password" id="password-input" name="password" placeholder="Contraseña..." 
+                                    autocomplete="current-password"
+                                    class="w-full px-4 py-3 border-2 border-purple-100 rounded-xl focus:border-purple-400 text-center text-lg shadow-inner">
+                                
+                                <button type="submit" class="w-full bg-gradient-to-r from-pink-500 to-purple-500 text-white py-3 rounded-xl font-bold text-lg shadow-lg hover:scale-[1.02] transition-all">
                                     Entrar
                                 </button>
-                            </div>
+                                
+                                <button type="button" onclick="isAdminLogin = !isAdminLogin; render();" class="text-[10px] text-gray-300 hover:text-purple-400 transition-colors block mx-auto">
+                                    ${isAdminLogin ? 'Volver' : 'Admin'}
+                                </button>
+                            </form>
                         </div>
                     </div>`;
-                
-                const input = document.getElementById('password-input');
-                input.addEventListener('input', (e) => currentPassword = e.target.value);
-                input.addEventListener('keypress', (e) => e.key === 'Enter' && handleLogin());
+
+                const v1 = document.getElementById('vid1');
+                const v2 = document.getElementById('vid2');
+                if (v1) v1.muted = v1Muted;
+                if (v2) v2.muted = v2Muted;
+
                 return;
             }
 
-            // PANTALLA PRINCIPAL
             const printedCount = photos.filter(p => p.printed).length;
-            const remainingSlots = 10 - photos.length;
-
             root.innerHTML = `
                 <div class="min-h-screen bg-gradient-to-br from-pink-50 via-purple-50 to-blue-50 p-4 pb-20">
                     <div class="max-w-6xl mx-auto">
-                        
                         <div class="bg-white rounded-2xl shadow-lg p-6 mb-8 flex flex-col md:flex-row justify-between items-center gap-4">
                             <div>
-                                <h1 class="text-3xl font-bold text-gray-800 flex items-center gap-2">
-                                    <span>🎁</span> Regalo 45 Aniversario
-                                </h1>
-                                <p class="text-gray-500 mt-1 ml-1">
-                                    ${userRole === 'admin' ? 'Modo: 🛠️ Administrador' : 'Modo: ✨ Protagonista'}
-                                </p>
+                                <h1 class="text-3xl font-bold text-gray-800 flex items-center gap-2"><span>🎁</span> Regalo 45 Aniversario</h1>
+                                <p class="text-gray-500 mt-1">${userRole === 'admin' ? '🛠️ Administrador' : '✨ Protagonista'}</p>
                             </div>
-                            <button onclick="location.reload()" class="px-5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg font-medium transition-colors">
-                                Cerrar sesión
-                            </button>
+                            <button onclick="handleLogout()" class="px-5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg font-medium transition-colors">Cerrar sesión</button>
                         </div>
 
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-                            <div class="bg-gradient-to-r from-pink-500 to-pink-600 rounded-2xl p-5 text-white shadow-lg transform hover:scale-105 transition-transform">
-                                <div class="text-4xl font-bold mb-1">${photos.length}/10</div>
-                                <div class="text-pink-100 font-medium">Fotos subidas</div>
-                            </div>
-                            <div class="bg-gradient-to-r from-purple-500 to-purple-600 rounded-2xl p-5 text-white shadow-lg transform hover:scale-105 transition-transform">
-                                <div class="text-4xl font-bold mb-1">${printedCount}</div>
-                                <div class="text-purple-100 font-medium">Ya impresas</div>
-                            </div>
-                            <div class="bg-gradient-to-r from-blue-500 to-blue-600 rounded-2xl p-5 text-white shadow-lg transform hover:scale-105 transition-transform">
-                                <div class="text-4xl font-bold mb-1">${remainingSlots}</div>
-                                <div class="text-blue-100 font-medium">Espacios libres</div>
-                            </div>
+                            <div class="bg-pink-500 rounded-2xl p-5 text-white shadow-lg"><div class="text-4xl font-bold mb-1">${photos.length}/10</div><div class="text-pink-100">Fotos subidas</div></div>
+                            <div class="bg-purple-500 rounded-2xl p-5 text-white shadow-lg"><div class="text-4xl font-bold mb-1">${printedCount}</div><div class="text-purple-100">Ya impresas</div></div>
+                            <div class="bg-blue-500 rounded-2xl p-5 text-white shadow-lg"><div class="text-4xl font-bold mb-1">${10 - photos.length}</div><div class="text-blue-100">Espacios libres</div></div>
                         </div>
 
                         ${userRole === 'friend' && photos.length < 10 && !uploading ? `
                             <div class="mb-10">
-                                <label class="group block bg-white rounded-3xl border-4 border-dashed border-purple-200 hover:border-purple-400 p-10 cursor-pointer transition-all hover:bg-purple-50 shadow-sm hover:shadow-md">
+                                <label class="group block bg-white rounded-3xl border-4 border-dashed border-purple-200 hover:border-purple-400 p-10 cursor-pointer transition-all shadow-sm">
                                     <div class="text-center">
-                                        <div class="text-6xl mb-4 group-hover:scale-110 transition-transform duration-300">📸</div>
+                                        <div class="text-6xl mb-4 group-hover:scale-110 transition-transform">📸</div>
                                         <div class="text-2xl font-bold text-gray-700 mb-2">Añadir foto nueva</div>
-                                        <div class="text-gray-500">Toca aquí para elegir un recuerdo</div>
                                     </div>
                                     <input type="file" accept="image/*" onchange="handleFileUpload(event)" class="hidden" />
                                 </label>
                             </div>
                         ` : ''}
 
-                        ${uploading ? `
-                            <div class="bg-white rounded-3xl shadow-xl p-8 text-center mb-8 animate-pulse border-2 border-purple-200">
-                                <div class="text-4xl mb-2">⏳</div>
-                                <p class="text-purple-600 font-bold text-xl">Subiendo foto...</p>
-                            </div>
-                        ` : ''}
+                        ${uploading ? `<div class="bg-white rounded-3xl shadow-xl p-8 text-center mb-8 animate-pulse border-2 border-purple-200"><p class="text-purple-600 font-bold text-xl">Subiendo foto...</p></div>` : ''}
 
                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
                             ${photos.map(p => `
-                                <div class="bg-white rounded-3xl shadow-xl overflow-hidden flex flex-col transition-all hover:shadow-2xl border border-gray-100">
-                                    
-                                    <div class="relative h-72">
-                                        <img src="${p.image_data}" class="w-full h-full object-cover" />
-                                        ${p.printed ? `
-                                            <div class="absolute inset-0 bg-black bg-opacity-30 flex items-center justify-center backdrop-blur-[1px]">
-                                                <div class="bg-green-500 text-white px-4 py-2 rounded-full font-bold shadow-lg transform -rotate-3 border-2 border-white">
-                                                    ✓ YA IMPRESA
-                                                </div>
-                                            </div>
-                                        ` : ''}
+                                <div class="bg-white rounded-3xl shadow-xl overflow-hidden flex flex-col border border-gray-100">
+                                    <div class="relative h-72"><img src="${p.image_data}" class="w-full h-full object-cover" />
+                                        ${p.printed ? `<div class="absolute inset-0 bg-black bg-opacity-30 flex items-center justify-center"><div class="bg-green-500 text-white px-4 py-2 rounded-full font-bold border-2 border-white transform -rotate-3">✓ YA IMPRESA</div></div>` : ''}
                                     </div>
-
                                     <div class="p-5 flex-1 flex flex-col">
-                                        <div class="text-xs text-gray-400 uppercase tracking-widest font-semibold mb-3">
-                                            📅 ${p.upload_date}
-                                        </div>
-
+                                        <div class="text-xs text-gray-400 mb-3">📅 ${p.upload_date}</div>
                                         <div class="mb-4 flex-1">
                                             ${editingId === p.id ? `
-                                                <textarea id="desc-${p.id}" class="note-input w-full p-3 border-2 border-yellow-300 rounded-xl text-gray-800 mb-2 resize-none shadow-inner" rows="3" placeholder="Escribe el lugar y fecha...">${p.description || ''}</textarea>
-                                                <div class="flex gap-2">
-                                                    <button onclick="saveDescription(${p.id})" class="flex-1 bg-green-500 text-white py-1 rounded-lg text-sm font-bold shadow-md hover:bg-green-600">Guardar</button>
-                                                    <button onclick="cancelEditing()" class="flex-1 bg-gray-200 text-gray-600 py-1 rounded-lg text-sm font-bold hover:bg-gray-300">Cancelar</button>
-                                                </div>
+                                                <textarea id="desc-${p.id}" class="note-input w-full p-3 border-2 border-yellow-300 rounded-xl resize-none" rows="3">${p.description || ''}</textarea>
+                                                <div class="flex gap-2"><button onclick="saveDescription(${p.id})" class="flex-1 bg-green-500 text-white py-1 rounded-lg text-sm font-bold">Guardar</button>
+                                                <button onclick="editingId=null;render()" class="flex-1 bg-gray-200 text-gray-600 py-1 rounded-lg text-sm font-bold">Cancelar</button></div>
                                             ` : `
-                                                <div onclick="startEditing(${p.id}, '${p.description ? p.description.replace(/'/g, "\\'") : ''}')" 
-                                                     class="cursor-pointer hover:bg-yellow-50 p-3 rounded-xl border border-transparent hover:border-yellow-200 transition-colors group min-h-[60px] flex items-center justify-center text-center">
-                                                    ${p.description 
-                                                        ? `<p class="text-gray-700 font-handwritten text-xl leading-snug">"${p.description}"</p>` 
-                                                        : `<div class="text-gray-300 italic text-sm group-hover:text-yellow-600 transition-colors">
-                                                                <span class="text-lg">✎</span> Toca para escribir una nota...
-                                                           </div>`
-                                                    }
+                                                <div onclick="startEditing(${p.id}, '${(p.description || '').replace(/'/g, "\\'")}')" class="cursor-pointer hover:bg-yellow-50 p-3 rounded-xl min-h-[60px] flex items-center justify-center text-center">
+                                                    ${p.description ? `<p class="text-gray-700 font-handwritten text-xl">"${p.description}"</p>` : `<span class="text-gray-300 text-sm">✎ Escribe una nota...</span>`}
                                                 </div>
                                             `}
                                         </div>
-
                                         <div class="flex gap-2 mt-auto border-t pt-4">
-                                            ${userRole === 'admin' ? `
-                                                <button onclick="handleTogglePrinted(${p.id})" class="flex-1 py-2 rounded-xl font-bold text-xs transition-colors ${p.printed ? 'bg-gray-100 text-gray-500' : 'bg-green-50 text-green-600 hover:bg-green-100'}">
-                                                    ${p.printed ? 'Desmarcar' : '🖨️ Marcar Impresa'}
-                                                </button>
-                                            ` : ''}
-                                            
-                                            ${ (userRole === 'admin' || !p.printed) ? `
-                                                <button onclick="handleDelete(${p.id})" class="w-12 bg-red-50 text-red-400 hover:bg-red-500 hover:text-white rounded-xl flex items-center justify-center transition-colors" title="Borrar foto">
-                                                    🗑️
-                                                </button>
-                                            ` : `
-                                                <div class="flex-1 bg-gray-50 text-gray-300 py-2 rounded-xl text-center font-bold text-xs cursor-not-allowed">
-                                                    🔒 Foto protegida
-                                                </div>
-                                            `}
+                                            ${userRole === 'admin' ? `<button onclick="handleTogglePrinted(${p.id})" class="flex-1 py-2 rounded-xl font-bold text-xs ${p.printed ? 'bg-gray-100 text-gray-500' : 'bg-green-50 text-green-600'}">${p.printed ? 'Desmarcar' : '🖨️ Marcar Impresa'}</button>` : ''}
+                                            ${(userRole === 'admin' || !p.printed) ? `<button onclick="handleDelete(${p.id})" class="w-12 bg-red-50 text-red-400 hover:bg-red-500 hover:text-white rounded-xl flex items-center justify-center transition-colors">🗑️</button>` : `<div class="flex-1 bg-gray-50 text-gray-300 py-2 rounded-xl text-center font-bold text-xs cursor-not-allowed">🔒 Protegida</div>`}
                                         </div>
                                     </div>
                                 </div>
                             `).join('')}
                         </div>
-
-                        ${photos.length === 10 ? `
-                            <div class="mt-10 bg-gradient-to-r from-yellow-400 to-orange-400 rounded-3xl shadow-xl p-8 text-center animate-bounce">
-                                <div class="text-4xl mb-2">🎉</div>
-                                <div class="text-3xl font-bold text-white mb-2">¡Colección completa!</div>
-                                <div class="text-yellow-100 text-lg">Has subido las 10 fotos del regalo.</div>
-                            </div>
-                        ` : ''}
                     </div>
-                </div>
-            `;
+                </div>`;
         }
-
         window.addEventListener('DOMContentLoaded', init);
     </script>
 </body>
